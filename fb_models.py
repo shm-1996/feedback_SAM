@@ -26,7 +26,7 @@ class Bubble():
             self.rho0 = 140*ac.m_p/(u.cm**3)
 
     def _check_parameter_units(self):
-        t1 = u.get_physical_type(rho0)=="mass density"
+        t1 = u.get_physical_type(self.rho0)=="mass density"
         if not(t1):
             raise ValueError("Units of rho0 are incorrect")
     
@@ -53,6 +53,7 @@ class SedovTaylorBW(Bubble):
         super().__init__(**kwargs)
         self._set_parmeters(**kwargs)
         self._check_parameter_units()
+        super()._check_parameter_units()
 
     def _set_parmeters(self, **kwargs):
         for key, value in kwargs.items():
@@ -88,6 +89,7 @@ class Spitzer(Bubble):
         super().__init__(**kwargs)
         self._set_parmeters(**kwargs)
         self._check_parameter_units()
+        super()._check_parameter_units()
 
         self.nbar = self.rho0/(self.muH*ac.m_p)
         self.RSt = quantities.RSt(self.Q0, self.nbar, alphaB=self.alphaB)
@@ -154,6 +156,7 @@ class EnergyDrivenWind(Bubble):
         super().__init__(**kwargs)
         self._set_parmeters(**kwargs)
         self._check_parameter_units()
+        super()._check_parameter_units()
 
     def _set_parmeters(self, **kwargs):
         for key, value in kwargs.items():
@@ -186,13 +189,105 @@ class EnergyDrivenWind(Bubble):
         self._check_time_units(t)
         press_we = (10./33)*self.Lwind*t/((4*np.pi/3)*self.radius(t)**3)
         return (press_we/ac.k_B).to("K/cm3")
+
+class AdiabaticWind(Bubble):
+    # Weaver solution Section 2 for an adiabatic wind bubble
+    # assumes no radiative losses, even in the shell.
+    # We don't treat conduction here either
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._set_parmeters(**kwargs)
+        self._check_parameter_units()
+        super()._check_parameter_units()
+
+        self._ad_shell_solve()
+        # fraction of the shell's outer radius at which the shell's inner radius lies
+        # approximate 0.86, but determined here from the numerical solution
+        self.xic = self.ad_shell_sol.t[-1]
+
+    def _set_parmeters(self, **kwargs):
+        # scaling paramter for dimensional analysis solution
+        # given after Equation 13 of Weaver et al. (1977)
+        self.alpha = 0.88
+        for key, value in kwargs.items():
+            setattr(self, key, value)
+
+        if "Lwind" not in self.__dict__:
+            self.Lwind = 1e38*u.erg/u.s
     
+    def _check_parameter_units(self):
+        t1 = u.get_physical_type(self.Lwind)=="power"
+        if not(t1):
+            raise ValueError("Units of L_wind are incorrect")
+
+    def radius(self, t):
+        self._check_time_units(t)
+        r_we = self.alpha*(self.Lwind*(t**3)/self.rho0)**(1./5)
+        return r_we.to("pc")
+    
+    def velocity(self, t):
+        self._check_time_units(t)
+        v_we = 0.6*self.radius(t)/t
+        return v_we.to("km/s")
+    
+    def momentum(self, t):
+        self._check_time_units(t)
+        pr_we = 4*np.pi*self.rho0*self.radius(t)**3*self.velocity(t)/3
+        return pr_we.to("solMass*km/s")
+    
+    def pressure(self, t):
+        self._check_time_units(t)
+        prefac = 5./(22*np.pi*(0.86*slef.alpha)**3)
+        press_we = prefac*(self.Lwind**2 * self.rho0**3 / t**4)**(1./5)
+        return (press_we/ac.k_B).to("K/cm3")
+    
+    #####################################################################################
+    ########################## FUNCTIONS FOR INTERNAL STRUCTURE #########################
+    #####################################################################################
+    
+    def _ad_shell_solve(self):
+        """
+        Solves the structure equation for the dimensionless parameters of the shell
+        surrounding an adiabatic wind bubble following section 2 of Weaver et al. (1977).
+        """
+
+        kappa = -2./3
+        gamma = 5./3
+
+        def derivs(xi, ys):
+            (U, G, P) = ys
+            t1 = kappa*G*(U-xi)/P - 2*gamma/xi - 2*kappa/U
+            t2 = gamma - (U-xi)**2 *G/P
+            Up = U*(t1/t2)
+            t1 = Up + 2*U/xi
+            t2 = U-xi
+            Gp = -G*(t1/t2)
+            Pp = P*(gamma*Gp/G - 2*kappa/(U-xi))
+            return (Up, Gp, Pp)
+
+        # stop if density goes to 0
+        def event_1(t, ys):
+            (U, G, P) = ys
+            return G
+        event_1.terminal = True
+
+        U0 = 2./(gamma + 1)
+        G0 = (gamma + 1)/(gamma - 1)
+        P0 = 2/(gamma + 1)
+        if not(hasattr(self, "ad_shell_sol")):
+            self.ad_shell_sol = solve_ivp(derivs, (1, 0.75), [U0, G0, P0],\
+                                          events=[event_1], dense_output=True,\
+                                          rtol=1e-12, atol = 1e-12)
+        return
+
 class MomentumDrivenWind(Bubble):
     # Momentum-driven bubble solution
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._set_parmeters(**kwargs)
         self._check_parameter_units()
+        super()._check_parameter_units()
 
     def _set_parmeters(self, **kwargs):
         for key, value in kwargs.items():
@@ -240,6 +335,7 @@ class MD_CEM(Bubble):
         super().__init__(**kwargs)
         self._set_parmeters(**kwargs)
         self._check_parameter_units()
+        super()._check_parameter_units()
         self._set_derived_parameters()
 
         # Separate Spitzer solution
@@ -306,7 +402,7 @@ class MD_CEM(Bubble):
 
     def _get_Tot(self):
         # Returns the time at which the WBB overtakes the PIR
-        # used as the seitch-over time in the zeta > 1 case.
+        # used as the switch-over time in the zeta > 1 case.
         # root found in dimensionless form, as in Equation C35
         # of Paper 1
         fac1 = (4.5**0.25)*np.sqrt(self.zeta)
@@ -445,6 +541,7 @@ class ED_CEM(Bubble):
         super().__init__(**kwargs)
         self._set_parmeters(**kwargs)
         self._check_parameter_units()
+        super()._check_parameter_units()
         self._set_derived_parameters()
 
         # Separate Spitzer solution
