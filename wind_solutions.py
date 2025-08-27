@@ -14,6 +14,30 @@ from abc import ABC, abstractmethod
 #########################################################################################
 
 class WindModel(ABC):
+    def __init__(self, **kwargs):
+        self._set_parameters_parent(**kwargs)
+        self._check_parameter_units_parent()
+
+    def _set_parmeters_parent(self, **kwargs):
+        for key, value in kwargs.items():
+            setattr(self, key, value)
+
+        # following CC85, set the default wind paramters in Msun/yr and 1e43 erg/s
+        # this very roughly follows parameters for M82
+        if "Mdot" not in self.__dict__:
+            self.Mdot = 1.0 * u.Msun / u.yr
+        
+        if "Edot" not in self.__dict__:
+            self.Edot = 1.0e43 * u.erg / u.s
+
+    def _check_parameter_units_parent(self):
+        t1 = u.get_physical_type(self.Edot)=="power"
+        t2 = u.get_physical_type(self.Mdot*u.s)=="mass"
+        if not(t1):
+            raise ValueError("Units of Edot are incorrect")
+        if not(t2):
+            raise ValueError("Units of Mdot are incorrect")
+
     @abstractmethod
     def mach(self, r):
         pass
@@ -41,37 +65,27 @@ class WindModel(ABC):
 
 class CC85Wind(WindModel):
     def __init__(self, **kwargs):
-        self._set_parmeters(**kwargs)
+        super().__init__(**kwargs)
+        self._set_parmeters()
         self._check_parameter_units()
+        self._set_derived_parameters()
 
-    def _set_parmeters(self, **kwargs):
-        for key, value in kwargs.items():
-            setattr(self, key, value)
-
-        # following CC85, set the default wind paramters in Msun/yr and 1e43 erg/s
-        # this very roughly follows parameters for M82
-        if "Mdot" not in self.__dict__:
-            self.Mdot = 1.0 * u.Msun / u.yr
-        
-        if "Edot" not in self.__dict__:
-            self.Edot = 1.0e43 * u.erg / u.s
-        
+    def _set_parmeters(self):       
         if "gamma" not in self.__dict__:
             self.gamma = 5./3
-
         if "R" not in self.__dict__:
             self.R = 100.0 * u.pc
 
-        self.vinf = np.sqrt(2*self.Edot/self.Mdot).to(u.km/u.s)
-
     def _check_parameter_units(self):
-        t1 = u.get_physical_type(self.Edot)=="power"
-        t2 = u.get_physical_type(self.Mdot*u.s)=="mass"
-        t3 = u.get_physical_type(self.R)=="length"
+        t1 = u.get_physical_type(self.R)=="length"
+        t2 = u.get_physical_type(self.gamma)=="dimensionless"
         if not(t1):
-            raise ValueError("Units of Edot are incorrect")
+            raise ValueError("Units of R are incorrect")
         if not(t2):
-            raise ValueError("Units of Mdot are incorrect")
+            raise ValueError("gamma should be dimensionless")
+
+    def _set_derived_parameters(self):
+        self.vinf = np.sqrt(2*self.Edot/self.Mdot).to(u.km/u.s)
 
     def mach(self, r):
         self._check_radius_units(r)
