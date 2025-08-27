@@ -15,17 +15,17 @@ from scipy.optimize import brentq
 
 class Bubble():
     def __init__(self, **kwargs):
-        self._set_parmeters(**kwargs)
-        self._check_parameter_units()
+        self._set_parmeters_parent(**kwargs)
+        self._check_parameter_units_parent()
 
-    def _set_parmeters(self, **kwargs):
+    def _set_parmeters_parent(self, **kwargs):
         for key, value in kwargs.items():
             setattr(self, key, value)
 
         if "rho0" not in self.__dict__:
             self.rho0 = 140*ac.m_p/(u.cm**3)
 
-    def _check_parameter_units(self):
+    def _check_parameter_units_parent(self):
         t1 = u.get_physical_type(self.rho0)=="mass density"
         if not(t1):
             raise ValueError("Units of rho0 are incorrect")
@@ -53,12 +53,8 @@ class SedovTaylorBW(Bubble):
         super().__init__(**kwargs)
         self._set_parmeters(**kwargs)
         self._check_parameter_units()
-        super()._check_parameter_units()
 
     def _set_parmeters(self, **kwargs):
-        for key, value in kwargs.items():
-            setattr(self, key, value)
-
         if "E" not in self.__dict__:
             self.E = 1e51*u.erg
     
@@ -89,16 +85,12 @@ class Spitzer(Bubble):
         super().__init__(**kwargs)
         self._set_parmeters(**kwargs)
         self._check_parameter_units()
-        super()._check_parameter_units()
 
         self.nbar = self.rho0/(self.muH*ac.m_p)
         self.RSt = quantities.RSt(self.Q0, self.nbar, alphaB=self.alphaB)
         self.tdio = quantities.Tdion(self.Q0, self.nbar, ci=self.ci, alphaB=self.alphaB)
 
     def _set_parmeters(self, **kwargs):
-        for key, value in kwargs.items():
-            setattr(self, key, value)
-        
         if "Q0" not in self.__dict__:
             self.Q0 = 1e50/u.s
         if "ci" not in self.__dict__:
@@ -156,12 +148,8 @@ class EnergyDrivenWind(Bubble):
         super().__init__(**kwargs)
         self._set_parmeters(**kwargs)
         self._check_parameter_units()
-        super()._check_parameter_units()
 
     def _set_parmeters(self, **kwargs):
-        for key, value in kwargs.items():
-            setattr(self, key, value)
-
         if "Lwind" not in self.__dict__:
             self.Lwind = 1e38*u.erg/u.s
     
@@ -199,7 +187,6 @@ class AdiabaticWind(Bubble):
         super().__init__(**kwargs)
         self._set_parmeters(**kwargs)
         self._check_parameter_units()
-        super()._check_parameter_units()
 
         self._ad_shell_solve()
         # fraction of the shell's outer radius at which the shell's inner radius lies
@@ -210,8 +197,6 @@ class AdiabaticWind(Bubble):
         # scaling paramter for dimensional analysis solution
         # given after Equation 13 of Weaver et al. (1977)
         self.alpha = 0.88
-        for key, value in kwargs.items():
-            setattr(self, key, value)
 
         if "Lwind" not in self.__dict__:
             self.Lwind = 1e38*u.erg/u.s
@@ -287,12 +272,8 @@ class MomentumDrivenWind(Bubble):
         super().__init__(**kwargs)
         self._set_parmeters(**kwargs)
         self._check_parameter_units()
-        super()._check_parameter_units()
 
     def _set_parmeters(self, **kwargs):
-        for key, value in kwargs.items():
-            setattr(self, key, value)
-
         if "pdotw" not in self.__dict__:
             self.pdotw = 1e5*u.Msun*u.km/u.s/u.Myr
 
@@ -335,7 +316,6 @@ class MD_CEM(Bubble):
         super().__init__(**kwargs)
         self._set_parmeters(**kwargs)
         self._check_parameter_units()
-        super()._check_parameter_units()
         self._set_derived_parameters()
 
         # Separate Spitzer solution
@@ -349,9 +329,6 @@ class MD_CEM(Bubble):
         self.joint_sol = self.joint_evol()
 
     def _set_parmeters(self, **kwargs):
-        for key, value in kwargs.items():
-            setattr(self, key, value)
-
         if "Q0" not in self.__dict__:
             self.Q0 = 1e50/u.s
         if "pdotw" not in self.__dict__:
@@ -541,7 +518,6 @@ class ED_CEM(Bubble):
         super().__init__(**kwargs)
         self._set_parmeters(**kwargs)
         self._check_parameter_units()
-        super()._check_parameter_units()
         self._set_derived_parameters()
 
         # Separate Spitzer solution
@@ -555,9 +531,6 @@ class ED_CEM(Bubble):
         self.joint_sol = self.joint_evol()
 
     def _set_parmeters(self, **kwargs):
-        for key, value in kwargs.items():
-            setattr(self, key, value)
-
         if "Q0" not in self.__dict__:
             self.Q0 = 1e50/u.s
         if "Lwind" not in self.__dict__:
