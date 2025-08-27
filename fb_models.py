@@ -8,12 +8,15 @@ from astropy import constants as ac
 import quantities
 from scipy.integrate import solve_ivp
 from scipy.optimize import brentq
+from abc import ABC, abstractmethod
+
+import wind_solutions
 
 #########################################################################################
 ########################### CLASSICAL BUBBLE EVOLUTION MODELS ###########################
 #########################################################################################
 
-class Bubble():
+class Bubble(ABC):
     def __init__(self, **kwargs):
         self._set_parmeters_parent(**kwargs)
         self._check_parameter_units_parent()
@@ -35,17 +38,21 @@ class Bubble():
         if not t1:
             raise ValueError("Units of t are incorrect")
 
+    @abstractmethod
     def radius(self, t):
-        return 0.0
+        pass
     
+    @abstractmethod
     def velocity(self, t):
-        return 0.0
+        pass
     
+    @abstractmethod
     def momentum(self, t):
-        return 0.0
+        pass
 
+    @abstractmethod
     def pressure(self, t):
-        return 0.0
+        pass
 
 class SedovTaylorBW(Bubble):
     # Sedov Taylor Solution for an instantaneous blast wave
@@ -78,6 +85,13 @@ class SedovTaylorBW(Bubble):
         pr_ST = 4*np.pi*self.rho0*self.radius(t)**3*self.velocity(t)/3
         return pr_ST.to("solMass*km/s")
 
+    def pressure(self, t):
+        # TODO: fill this in with the correct number, this is simply
+        #       a placeholder estimate
+        self._check_time_units(t)
+        press_ST = self.E/(self.radius(t)**3)
+        return (press_ST/ac.k_B).to("K/cm3")
+
 class Spitzer(Bubble):
     # Spitzer solution for a photo-ionized gas bubble
     # includes the Hosokawa & Inutsuka (2006) correction
@@ -99,12 +113,16 @@ class Spitzer(Bubble):
             self.alphaB = 3.11e-13*(u.cm**3/u.s)
         if "muH" not in self.__dict__:
             self.muH = 1.4
+        if "adj" not in self.__dict__:
+            self.adj = True
+        
     
     def _check_parameter_units(self):
         t1 = u.get_physical_type(self.Q0)=="frequency"
         t2 = u.get_physical_type(self.ci)=="speed"
         t3 = u.get_physical_type(self.alphaB)=="volumetric flow rate"
         t4 = u.get_physical_type(self.muH)=="dimensionless"
+        t5 = type(self.adj)==bool
         if not(t1):
             raise ValueError("Units of Q0 are incorrect")
         if not(t2):
@@ -113,6 +131,8 @@ class Spitzer(Bubble):
             raise ValueError("Units of alpha_B are incorrect")
         if not(t4):
             raise ValueError("Units of mu_H are incorrect")
+        if not(t5):
+            raise ValueError("adj must be a boolean value")
 
     def rhoi(self, t):
         self._check_time_units(t)
@@ -129,11 +149,11 @@ class Spitzer(Bubble):
         v_sp = (self.RSt/self.tdio)*(1 + 7*t/(4*self.tdio))**(-3./7)
         return v_sp.to("km/s")
     
-    def momentum(self, t, adj=True):
+    def momentum(self, t):
         self._check_time_units(t)
         prefac = 4*np.pi*self.rho0*self.RSt**4/(3*self.tdio)
         pr_sp = prefac*(1 + 7*t/(4*self.tdio))**(9./7)
-        if adj:
+        if self.adj:
             pr_sp *= (1 - (self.RSt/self.radius(t))**1.5)
         return pr_sp.to("solMass*km/s")
     
@@ -187,11 +207,16 @@ class AdiabaticWind(Bubble):
         super().__init__(**kwargs)
         self._set_parmeters(**kwargs)
         self._check_parameter_units()
+        self._set_derived_parameters()
 
         self._ad_shell_solve()
         # fraction of the shell's outer radius at which the shell's inner radius lies
         # approximate 0.86, but determined here from the numerical solution
         self.xic = self.ad_shell_sol.t[-1]
+
+        # set free-wind solution
+        fw_dict = {"Mdot": self.Mdotw, "Edot": self.Lwind, "R": self.rfb}
+        self.free_wind = wind_solutions.CC85Wind(**fw_dict)
 
     def _set_parmeters(self, **kwargs):
         # scaling paramter for dimensional analysis solution
@@ -200,11 +225,24 @@ class AdiabaticWind(Bubble):
 
         if "Lwind" not in self.__dict__:
             self.Lwind = 1e38*u.erg/u.s
+        if "Mdotw" not in self.__dict__:
+            self.Mdotw = 1e-4*u.Msun/u.yr
+        if "rfb" not in self.__dict__:
+            self.rfb = 1.0*u.pc
     
     def _check_parameter_units(self):
         t1 = u.get_physical_type(self.Lwind)=="power"
+        t2 = u.get_physical_type(self.rfb)=="length"
+        t3 = u.get_physical_type(self.Mdotw*u.s)=="mass"
         if not(t1):
             raise ValueError("Units of L_wind are incorrect")
+        if not(t2):
+            raise ValueError("Units of r_fb are incorrect")
+        if not(t3):
+            raise ValueError("Units of Mdot_w are incorrect")
+
+    def _set_derived_parameters(self):
+        self.Vwind = np.sqrt(2*self.Lwind/self.Mdotw).to("km/s")
 
     def radius(self, t):
         self._check_time_units(t)
@@ -227,9 +265,11 @@ class AdiabaticWind(Bubble):
         press_we = prefac*(self.Lwind**2 * self.rho0**3 / t**4)**(1./5)
         return (press_we/ac.k_B).to("K/cm3")
     
-    #####################################################################################
-    ########################## FUNCTIONS FOR INTERNAL STRUCTURE #########################
-    #####################################################################################
+    # TODO: make a separate file for shell structure solutions
+    #       so this is similar to the free-wind implementation here 
+    #################################################################
+    ################ FUNCTIONS FOR INTERNAL STRUCTURE ###############
+    #################################################################
     
     def _ad_shell_solve(self):
         """
@@ -237,6 +277,8 @@ class AdiabaticWind(Bubble):
         surrounding an adiabatic wind bubble following section 2 of Weaver et al. (1977).
         """
 
+        # kappa is the "second order deceleration paramter" of the shell
+        # the -2/3 value is specifc to the the R ~ t^(3/5) solution
         kappa = -2./3
         gamma = 5./3
 
