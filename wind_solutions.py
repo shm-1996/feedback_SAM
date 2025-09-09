@@ -18,7 +18,7 @@ class WindModel(ABC):
         self._set_parameters_parent(**kwargs)
         self._check_parameter_units_parent()
 
-    def _set_parmeters_parent(self, **kwargs):
+    def _set_parameters_parent(self, **kwargs):
         for key, value in kwargs.items():
             setattr(self, key, value)
 
@@ -74,6 +74,7 @@ class CC85Wind(WindModel):
         if "gamma" not in self.__dict__:
             self.gamma = 5./3
         if "R" not in self.__dict__:
+            # 100 pc based more on CC85 values for M82
             self.R = 100.0 * u.pc
 
     def _check_parameter_units(self):
