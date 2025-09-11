@@ -38,6 +38,11 @@ class Bubble(ABC):
         if not t1:
             raise ValueError("Units of t are incorrect")
 
+    def _check_radius_units(self, r):
+        r1 = u.get_physical_type(r)=="length"
+        if not r1:
+            raise ValueError("Units of r are incorrect")
+
     @abstractmethod
     def radius(self, t):
         pass
@@ -207,16 +212,14 @@ class AdiabaticWind(Bubble):
         super().__init__(**kwargs)
         self._set_parmeters(**kwargs)
         self._check_parameter_units()
+        self._ad_shell_solve(-2./3)
         self._set_derived_parameters()
 
-        self._ad_shell_solve()
-        # fraction of the shell's outer radius at which the shell's inner radius lies
-        # approximate 0.86, but determined here from the numerical solution
-        self.xic = self.ad_shell_sol.t[-1]
+        
 
         # set free-wind solution
         fw_dict = {"Mdot": self.Mdotw, "Edot": self.Lwind,
-                   "R": self.rfb, "gamma":5./3}
+                   "R": self.rfb, "gamma":self.gamma}
         self.free_wind = wind_solutions.CC85Wind(**fw_dict)
 
     def _set_parmeters(self, **kwargs):
@@ -230,6 +233,8 @@ class AdiabaticWind(Bubble):
             self.Mdotw = 1e-4*u.Msun/u.yr
         if "rfb" not in self.__dict__:
             self.rfb = 1.0*u.pc
+        if "gamma" not in self.__dict__:
+            self.gamma = 5./3
     
     def _check_parameter_units(self):
         t1 = u.get_physical_type(self.Lwind)=="power"
@@ -243,7 +248,22 @@ class AdiabaticWind(Bubble):
             raise ValueError("Units of Mdot_w are incorrect")
 
     def _set_derived_parameters(self):
+        # fraction of the shell's outer radius at which the shell's inner radius lies
+        # approximate 0.86, but determined here from the numerical solution
+        xic = self.ad_shell_sol.t[-1]
+        # the dimensionless value of the pressure in the shell at the inner edge of the
+        # shell radius. Approx 0.59 but determined here from the numerical solution
+        Pxic = self.ad_shell_sol.y[2,-1]
+        g = self.gamma
+        # the dimensionless pre-factor in the scaling solution. Approx 0.88 but 
+        # determined here for general gamma and the numerical solution
+        self.alpha = (125*(g - 1)/(12*np.pi*xic**3*Pxic*(9*g - 4)))**0.2
+        (self.xic, self.Pxic) = (xic, Pxic)
         self.Vwind = np.sqrt(2*self.Lwind/self.Mdotw).to("km/s")
+
+    #################################################################
+    #################   TOP-LINE DEFAULT FUNCTIONS   ################
+    #################################################################
 
     def radius(self, t):
         self._check_time_units(t)
@@ -262,26 +282,91 @@ class AdiabaticWind(Bubble):
     
     def pressure(self, t):
         self._check_time_units(t)
-        prefac = 5./(22*np.pi*(0.86*slef.alpha)**3)
+        g = self.gamma
+        prefac = 15*(g-1)/(4*np.pi*(9*g-4)*(self.xic*self.alpha)**3)
         press_we = prefac*(self.Lwind**2 * self.rho0**3 / t**4)**(1./5)
         return (press_we/ac.k_B).to("K/cm3")
     
+    def density_profile(self, r, t):
+        # returns the density of the bubble at radius r and time t
+        # r : radius (generally an array)
+        # t : time (should be a scalar)
+        self._check_time_units(t)
+        self._check_radius_units(r)
+        g = self.gamma
+        r_rs = self.R_rs(t)
+        r_b = self.radius(t)
+        r_c = self.xic*r_b
+        rho_fw = lambda r: self.free_wind.rho(r)
+        rho_sw = lambda r: ((g+1)/(g-1))*self.free_wind.rho(r_rs)
+        r_sh_ref = r_b*self.ad_shell_sol.t[::-1]
+        rho_sh_ref = self.rho0*self.ad_shell_sol.y[1,::-1]
+        rho_sh = lambda r: np.interp(r, r_sh_ref, rho_sh_ref)
+        rho_bg = lambda r: self.rho0
+        rho = np.piecewise(r, [r<r_rs, (r>=r_rs) & (r<r_c), (r>=r_c) & (r<=r_b), r>r_b],\
+                           [rho_fw, rho_sw, rho_sh, rho_bg])
+        return rho.to("solMass/pc3")
+    
+    def velocity_profile(self, r, t):
+        # returns the velocity of the bubble at radius r and time t
+        # r : radius (generally an array)
+        # t : time (should be a scalar)
+        self._check_time_units(t)
+        self._check_radius_units(r)
+        g = self.gamma
+        r_rs = self.R_rs(t)
+        r_b = self.radius(t)
+        r_c = self.xic*r_b
+        u_fw = lambda r: self.free_wind.u(r)
+        u_sw = lambda r: self._v_sw(r, t)
+        r_sh_ref = r_b*self.ad_shell_sol.t[::-1]
+        u_sh_ref = self.velocity(t)*self.ad_shell_sol.y[0,::-1]
+        u_sh = lambda r: np.interp(r, r_sh_ref, u_sh_ref)
+        u_bg = lambda r: 0
+        u = np.piecewise(r, [r<r_rs, (r>=r_rs) & (r<r_c), (r>=r_c) & (r<=r_b), r>r_b],\
+                           [u_fw, u_sw, u_sh, u_bg])
+        return u.to("km/s")
+    
+    def pressure_profile(self, r, t):
+        # returns the pressure of the bubble at radius r and time t
+        # r : radius (generally an array)
+        # t : time (should be a scalar)
+        self._check_time_units(t)
+        self._check_radius_units(r)
+        g = self.gamma
+        r_rs = self.R_rs(t)
+        r_b = self.radius(t)
+        r_c = self.xic*r_b
+        p_fw = lambda r: self.free_wind.press(r)
+        p_sw = lambda r: self.pressure(t)*ac.k_B
+        r_sh_ref = r_b*self.ad_shell_sol.t[::-1]
+        p_sh_ref = self.velocity(t)**2*self.rho0*self.ad_shell_sol.y[2,::-1]
+        p_sh = lambda r: np.interp(r, r_sh_ref, p_sh_ref)
+        p_bg = lambda r: self.rho0*(1*u.km/u.s)**2
+        p = np.piecewise(r, [r<r_rs, (r>=r_rs) & (r<r_c), (r>=r_c) & (r<=r_b), r>r_b],\
+                           [p_fw, p_sw, p_sh, p_bg])
+        return (p/ac.k_B).to("K/cm3")
+    
     # TODO: make a separate file for shell structure solutions
     #       so this is similar to the free-wind implementation here 
+    #     - Also, replace the string versions of the 
+    #       param.to() unit conversion calls
     #################################################################
     ################ FUNCTIONS FOR INTERNAL STRUCTURE ###############
     #################################################################
-    
-    def _ad_shell_solve(self):
+
+    def _ad_shell_solve(self, kappa):
         """
         Solves the structure equation for the dimensionless parameters of the shell
         surrounding an adiabatic wind bubble following section 2 of Weaver et al. (1977).
+        Args:
+            kappa (float): "second order deceleration parameter" of the shell
+                           related to the power-law index of the shell radius in time
+                           Equal to -2/3 for the R ~ t^(3/5) solution
+        Returns:
+            None: sets self.ad_shell_sol to the solution object from solve_ivp
         """
-
-        # kappa is the "second order deceleration paramter" of the shell
-        # the -2/3 value is specifc to the the R ~ t^(3/5) solution
-        kappa = -2./3
-        gamma = 5./3
+        gamma = self.gamma
 
         def derivs(xi, ys):
             (U, G, P) = ys
@@ -296,8 +381,7 @@ class AdiabaticWind(Bubble):
 
         # stop if density goes to 0
         def event_1(t, ys):
-            (U, G, P) = ys
-            return G
+            return ys[1]
         event_1.terminal = True
 
         U0 = 2./(gamma + 1)
@@ -307,7 +391,30 @@ class AdiabaticWind(Bubble):
             self.ad_shell_sol = solve_ivp(derivs, (1, 0.75), [U0, G0, P0],\
                                           events=[event_1], dense_output=True,\
                                           rtol=1e-12, atol = 1e-12)
-        return
+        return None
+    
+    def _v_sw(self, r, t):
+        # gives the radial velocity in the shocked wind region
+        self._check_radius_units(r)
+        self._check_time_units(t)
+        g = self.gamma
+        r_c = self.xic*self.radius(t)
+        gfac = (9*g-4)/(15*g)
+        t1 = (gfac*r_c**3/(r**2*t)).to("km/s")
+        t2 = ((4/(15*g))*(r/t)).to("km/s")
+        return t1 + t2
+    
+    def R_rs(self, t):
+        # gives the radius of the reverse shock as a function of time in the
+        # adiabatic wind bubble solution
+        self._check_time_units(t)
+        Rc = self.xic*self.radius(t)
+        R_ballistic = self.Vwind*t
+        g = self.gamma
+        gfac = ((g+1)/(g-1)) * ((9*g-4)/(15*g)) * ((g+1)**2/(4*g))**(1/(g-1))
+        res = np.sqrt(gfac*Rc**3/R_ballistic)
+        return res.to("pc")
+
 
 class MomentumDrivenWind(Bubble):
     # Momentum-driven bubble solution
