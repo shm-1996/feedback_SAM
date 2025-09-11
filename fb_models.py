@@ -215,7 +215,8 @@ class AdiabaticWind(Bubble):
         self.xic = self.ad_shell_sol.t[-1]
 
         # set free-wind solution
-        fw_dict = {"Mdot": self.Mdotw, "Edot": self.Lwind, "R": self.rfb}
+        fw_dict = {"Mdot": self.Mdotw, "Edot": self.Lwind,
+                   "R": self.rfb, "gamma":5./3}
         self.free_wind = wind_solutions.CC85Wind(**fw_dict)
 
     def _set_parmeters(self, **kwargs):
