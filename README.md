@@ -1,2 +1,8 @@
 # feedback_SAM
-A semi-analytic model for the feedback from massive stars in star forming clouds
+This repository contains a series of models for the evolution of star forming clouds and
+the feedback bubbles from massive star feedback that regulate that star formation. This
+code is under active development. The iPython notebook `walkthrough.ipynb` contains an
+explanation of parts of the code that may be useful to users.
+
+Some details on each of the clases implemented here are provided on the home page of the
+Wiki.
